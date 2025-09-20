@@ -3,7 +3,7 @@
   "name": "Screen Bugs",
   "version": "1.0.0",
   "description": "Paste small pictures of bugs on the screen (for fun/pranks).",
-  "permissions": ["scripting", "activeTab"],
+  "permissions": ["scripting", "activeTab", "storage", "alarms"],
   "action": {
     "default_title": "Screen Bugs",
     "default_popup": "popup.html"
@@ -19,6 +19,18 @@
     "clear-bugs": {
       "suggested_key": { "default": "Alt+C" },
       "description": "Clear bugs from the current tab"
+    },
+    "start-eye-tracking": {
+      "suggested_key": { "default": "Ctrl+Shift+E", "mac": "Command+Shift+E" },
+      "description": "Start eye tracking"
+    },
+    "calibrate-eye-tracking": {
+      "suggested_key": { "default": "Ctrl+Shift+C", "mac": "Command+Shift+C" },
+      "description": "Calibrate eye tracking"
+    },
+    "stop-eye-tracking": {
+      // "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Stop eye tracking"
     }
   }
 }

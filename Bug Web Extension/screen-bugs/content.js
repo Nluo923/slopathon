@@ -4,11 +4,28 @@
 
   const CONTAINER_ID = "__screen_bugs_container__";
   const BEETLE_LAYER_CLASS = "__screen_bugs_beetle_layer__";
+  const EYE_TRACKER_ID = "__eye_tracker_dot__";
 
   // --- Z-LAYERS ---
-  const Z = { BALL: 20, SCATTER: 30, SCATTER_OVER: 35, BEETLE: 40 };
+  const Z = { BALL: 20, SCATTER: 30, SCATTER_OVER: 35, BEETLE: 40, EYE_TRACKER: 50 };
 
-  const state = { beetles: [], scatters: [], engineRaf: null, running: false, lastTs: 0, accum: 0, dtFixed: 1/60 };
+  const state = { 
+    beetles: [], 
+    scatters: [], 
+    engineRaf: null, 
+    running: false, 
+    lastTs: 0, 
+    accum: 0, 
+    dtFixed: 1/60,
+    eyeTracking: {
+      active: false,
+      dot: null,
+      lastGaze: { x: 0, y: 0 },
+      calibrationMode: false,
+      calibrationPoints: [],
+      currentCalibrationIndex: 0
+    }
+  };
 
   // -------- utils
   const rand = (a,b)=>Math.random()*(b-a)+a;
@@ -24,6 +41,308 @@
     Object.assign(c.style,{position:"fixed",inset:"0",pointerEvents:"none",zIndex:"2147483647",overflow:"hidden"});
     document.documentElement.appendChild(c);
     return c;
+  }
+
+  // =================== EYE TRACKING ===================
+  function createEyeTrackerDot() {
+    if (state.eyeTracking.dot) return state.eyeTracking.dot;
+    
+    const container = ensureContainer();
+    const dot = document.createElement("div");
+    dot.id = EYE_TRACKER_ID;
+    Object.assign(dot.style, {
+      position: "fixed",
+      width: "12px",
+      height: "12px",
+      borderRadius: "50%",
+      backgroundColor: "#ff4444",
+      border: "2px solid #fff",
+      boxShadow: "0 0 8px rgba(255, 68, 68, 0.6)",
+      pointerEvents: "none",
+      zIndex: String(Z.EYE_TRACKER),
+      transform: "translate(-50%, -50%)",
+      transition: "all 0.1s ease-out",
+      opacity: "0.8"
+    });
+    
+    container.appendChild(dot);
+    state.eyeTracking.dot = dot;
+    return dot;
+  }
+
+  function createCalibrationPoint(x, y, index) {
+    const container = ensureContainer();
+    const point = document.createElement("div");
+    point.className = "__calibration_point__";
+    Object.assign(point.style, {
+      position: "fixed",
+      left: `${x}px`,
+      top: `${y}px`,
+      width: "20px",
+      height: "20px",
+      borderRadius: "50%",
+      backgroundColor: "#4CAF50",
+      border: "3px solid #fff",
+      boxShadow: "0 0 12px rgba(76, 175, 80, 0.8)",
+      transform: "translate(-50%, -50%)",
+      zIndex: String(Z.EYE_TRACKER + 1),
+      cursor: "pointer",
+      pointerEvents: "auto",
+      animation: "pulse 1.5s infinite"
+    });
+
+    // Add pulsing animation
+    if (!document.getElementById("__calibration_styles__")) {
+      const style = document.createElement("style");
+      style.id = "__calibration_styles__";
+      style.textContent = `
+        @keyframes pulse {
+          0% { transform: translate(-50%, -50%) scale(1); }
+          50% { transform: translate(-50%, -50%) scale(1.2); }
+          100% { transform: translate(-50%, -50%) scale(1); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Add click handler for calibration
+    point.addEventListener("click", () => {
+      if (window.webgazer && state.eyeTracking.calibrationMode) {
+        // Record calibration point
+        window.webgazer.recordScreenPosition(x, y, 'click');
+        point.style.backgroundColor = "#2196F3";
+        point.style.animation = "none";
+        
+        setTimeout(() => {
+          point.remove();
+          state.eyeTracking.currentCalibrationIndex++;
+          
+          if (state.eyeTracking.currentCalibrationIndex < state.eyeTracking.calibrationPoints.length) {
+            const nextPoint = state.eyeTracking.calibrationPoints[state.eyeTracking.currentCalibrationIndex];
+            createCalibrationPoint(nextPoint.x, nextPoint.y, state.eyeTracking.currentCalibrationIndex);
+          } else {
+            // Calibration complete
+            finishCalibration();
+          }
+        }, 500);
+      }
+    });
+
+    container.appendChild(point);
+    return point;
+  }
+
+  function startEyeTracking(options = {}) {
+    if (!window.webgazer) {
+      console.error("WebGazer.js not loaded");
+      chrome.runtime.sendMessage({
+        type: "EYE_TRACKING_ERROR",
+        payload: { error: "WebGazer.js not loaded" }
+      });
+      return;
+    }
+
+    try {
+      state.eyeTracking.active = true;
+      createEyeTrackerDot();
+
+      // Configure WebGazer
+      window.webgazer
+        .setGazeListener((data, timestamp) => {
+          if (data && state.eyeTracking.active && state.eyeTracking.dot && !state.eyeTracking.calibrationMode) {
+            const x = data.x;
+            const y = data.y;
+            
+            // Update dot position
+            state.eyeTracking.dot.style.left = `${x}px`;
+            state.eyeTracking.dot.style.top = `${y}px`;
+            state.eyeTracking.lastGaze = { x, y };
+
+            // Send data to background script
+            chrome.runtime.sendMessage({
+              type: "EYE_TRACKING_DATA",
+              payload: { x, y, timestamp }
+            });
+          }
+        })
+        .begin();
+
+      // Hide the video preview if requested
+      if (!options.showVideo) {
+        setTimeout(() => {
+          const video = document.getElementById('webgazerVideoFeed');
+          if (video) {
+            video.style.display = 'none';
+          }
+        }, 1000);
+      }
+
+      // Hide prediction points if requested
+      if (!options.showPredictions) {
+        window.webgazer.showPredictionPoints(false);
+      }
+
+      console.log("Eye tracking started");
+      
+    } catch (error) {
+      console.error("Error starting eye tracking:", error);
+      chrome.runtime.sendMessage({
+        type: "EYE_TRACKING_ERROR",
+        payload: { error: error.message }
+      });
+    }
+  }
+
+  function stopEyeTracking() {
+    if (window.webgazer) {
+      window.webgazer.end();
+    }
+    
+    state.eyeTracking.active = false;
+    state.eyeTracking.calibrationMode = false;
+    
+    if (state.eyeTracking.dot) {
+      state.eyeTracking.dot.remove();
+      state.eyeTracking.dot = null;
+    }
+
+    // Clean up calibration points
+    document.querySelectorAll(".__calibration_point__").forEach(el => el.remove());
+    
+    // Hide video feed
+    const video = document.getElementById('webgazerVideoFeed');
+    if (video) {
+      video.style.display = 'none';
+    }
+
+    console.log("Eye tracking stopped");
+  }
+
+  function startCalibration() {
+    if (!window.webgazer) {
+      console.error("WebGazer.js not loaded");
+      return;
+    }
+
+    state.eyeTracking.calibrationMode = true;
+    state.eyeTracking.currentCalibrationIndex = 0;
+    
+    // Define calibration points (9-point calibration)
+    const margin = 100;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    
+    state.eyeTracking.calibrationPoints = [
+      // Corners
+      { x: margin, y: margin },
+      { x: vw - margin, y: margin },
+      { x: vw - margin, y: vh - margin },
+      { x: margin, y: vh - margin },
+      // Center and mid-points
+      { x: vw / 2, y: vh / 2 },
+      { x: vw / 2, y: margin },
+      { x: vw - margin, y: vh / 2 },
+      { x: vw / 2, y: vh - margin },
+      { x: margin, y: vh / 2 }
+    ];
+
+    // Start WebGazer if not already started
+    if (!state.eyeTracking.active) {
+      startEyeTracking({ showVideo: true, showPredictions: false });
+    }
+
+    // Create first calibration point
+    setTimeout(() => {
+      if (state.eyeTracking.calibrationPoints.length > 0) {
+        const firstPoint = state.eyeTracking.calibrationPoints[0];
+        createCalibrationPoint(firstPoint.x, firstPoint.y, 0);
+        
+        // Show instructions
+        showCalibrationInstructions();
+      }
+    }, 1500);
+  }
+
+  function showCalibrationInstructions() {
+    const instructions = document.createElement("div");
+    instructions.id = "__calibration_instructions__";
+    instructions.innerHTML = `
+      <div style="
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 15px 25px;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        z-index: ${Z.EYE_TRACKER + 10};
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      ">
+        👁️ <strong>Eye Tracking Calibration</strong><br>
+        Click on each green dot while looking at it<br>
+        <small>Point ${state.eyeTracking.currentCalibrationIndex + 1} of ${state.eyeTracking.calibrationPoints.length}</small>
+      </div>
+    `;
+    
+    ensureContainer().appendChild(instructions);
+  }
+
+  function finishCalibration() {
+    state.eyeTracking.calibrationMode = false;
+    
+    // Remove instructions
+    const instructions = document.getElementById("__calibration_instructions__");
+    if (instructions) {
+      instructions.remove();
+    }
+
+    // Hide video feed after calibration
+    setTimeout(() => {
+      const video = document.getElementById('webgazerVideoFeed');
+      if (video) {
+        video.style.display = 'none';
+      }
+    }, 1000);
+
+    // Show completion message
+    const completion = document.createElement("div");
+    completion.innerHTML = `
+      <div style="
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(76, 175, 80, 0.9);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        font-size: 16px;
+        z-index: ${Z.EYE_TRACKER + 10};
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      ">
+        ✅ <strong>Calibration Complete!</strong><br>
+        Eye tracking is now active
+      </div>
+    `;
+    
+    ensureContainer().appendChild(completion);
+    
+    setTimeout(() => {
+      completion.remove();
+    }, 3000);
+
+    chrome.runtime.sendMessage({
+      type: "CALIBRATION_COMPLETE",
+      payload: { timestamp: Date.now() }
+    });
+
+    console.log("Eye tracking calibration completed");
   }
 
   // =================== SCATTER BUGS = BOIDS (independent personalities + orbit attraction) ===================
@@ -49,6 +368,11 @@
     orbitMin: 80,           // min ring radius around dung
     orbitMax: 180,          // max ring radius
     tangentialBias: 0.35,   // how much to add tangential swirl
+
+    // Eye tracking attraction
+    eyeAttractRadius: 300,  // pixels from eye gaze
+    wEyeAttract: 1.5,       // attraction strength to eye position
+    eyeOrbitRadius: 50,     // how close bugs will get to eye position
 
     // Edges
     wallSoft: 140,
@@ -115,6 +439,7 @@
       wAli:  BOIDS_CFG.wAlignment  * rand(0.7, 1.15),
       wCoh:  BOIDS_CFG.wCohesion   * rand(0.6, 1.1),
       wAtt:  BOIDS_CFG.wAttract    * rand(0.9, 1.4),
+      wEyeAtt: BOIDS_CFG.wEyeAttract * rand(0.7, 1.8), // eye attraction personality
       jitterAccel: BOIDS_CFG.jitterAccel * rand(0.8, 1.4),
       neighborR: BOIDS_CFG.neighborRadius * rand(0.85, 1.15),
       sepR: BOIDS_CFG.separationRadius * rand(0.9, 1.2),
@@ -179,6 +504,33 @@
         let wx = Math.cos(p.wanderTheta), wy = Math.sin(p.wanderTheta);
         wx *= p.wanderStrength; wy *= p.wanderStrength;
 
+        // --- EYE TRACKING ATTRACTION ---
+        let eyeAx = 0, eyeAy = 0, eyeBias = 0;
+        if (state.eyeTracking.active && state.eyeTracking.lastGaze.x && state.eyeTracking.lastGaze.y) {
+          const eyeX = state.eyeTracking.lastGaze.x;
+          const eyeY = state.eyeTracking.lastGaze.y;
+          const eyeDx = eyeX - px, eyeDy = eyeY - py;
+          const eyeDist = Math.hypot(eyeDx, eyeDy);
+          
+          if (eyeDist < BOIDS_CFG.eyeAttractRadius && eyeDist > BOIDS_CFG.eyeOrbitRadius) {
+            // Attract to eye position but maintain some orbit distance
+            const eyeNx = eyeDx / eyeDist, eyeNy = eyeDy / eyeDist;
+            const targetDist = BOIDS_CFG.eyeOrbitRadius;
+            const desiredX = eyeX - eyeNx * targetDist;
+            const desiredY = eyeY - eyeNy * targetDist;
+            
+            const toDesiredX = desiredX - px, toDesiredY = desiredY - py;
+            const desiredVelX = (toDesiredX / Math.hypot(toDesiredX, toDesiredY)) * BOIDS_CFG.maxSpeed * 0.6;
+            const desiredVelY = (toDesiredY / Math.hypot(toDesiredX, toDesiredY)) * BOIDS_CFG.maxSpeed * 0.6;
+            
+            eyeAx = (desiredVelX - vx) * p.wEyeAtt;
+            eyeAy = (desiredVelY - vy) * p.wEyeAtt;
+            
+            // Bias factor affects other behaviors
+            eyeBias = Math.max(0, 1 - eyeDist / BOIDS_CFG.eyeAttractRadius);
+          }
+        }
+
         // --- attraction (SEEK to personal orbit point + tangential swirl)
         let attAx=0, attAy=0, dungBias=0;
         const nd=nearestDung(px,py);
@@ -211,22 +563,24 @@
           dungBias = gain;
         }
 
-        // --- combine accelerations (pixel units)
-        let ax = p.wSep*sepX + p.wAli*aliX + p.wCoh*cohX + attAx + wx;
-        let ay = p.wSep*sepY + p.wAli*aliY + p.wCoh*cohY + attAy + wy;
+        // --- combine accelerations (eye tracking has priority over dung when active)
+        const totalBias = Math.max(eyeBias, dungBias);
+        let ax = p.wSep*sepX + p.wAli*aliX + p.wCoh*cohX + attAx + eyeAx + wx;
+        let ay = p.wSep*sepY + p.wAli*aliY + p.wCoh*cohY + attAy + eyeAy + wy;
 
-        // --- soft edge steer (relaxed if dung is pulling)
-        const soften = dungBias > 0.25 ? 0.35 : 1.0;
+        // --- soft edge steer (relaxed if something is pulling)
+        const soften = totalBias > 0.25 ? 0.35 : 1.0;
         const m = BOIDS_CFG.wallSoft;
         if(px < m) ax += soften * (m - px) / m * BOIDS_CFG.maxAccel * 0.15;
         if(py < m) ay += soften * (m - py) / m * BOIDS_CFG.maxAccel * 0.15;
         if(px > vw - m) ax -= soften * (px - (vw - m)) / m * BOIDS_CFG.maxAccel * 0.15;
         if(py > vh - m) ay -= soften * (py - (vh - m)) / m * BOIDS_CFG.maxAccel * 0.15;
 
-        // --- per-bug extra jitter
+        // --- per-bug extra jitter (reduced when attracted to eye)
         let jx = rand(-1,1), jy = rand(-1,1);
         ({x:jx,y:jy}=norm(jx,jy));
-        jx *= (p.jitterAccel); jy *= (p.jitterAccel);
+        const jitterReduction = eyeBias > 0.3 ? 0.3 : 1.0; // calmer near eyes
+        jx *= (p.jitterAccel * jitterReduction); jy *= (p.jitterAccel * jitterReduction);
         ax += jx; ay += jy;
 
         // --- integrate
@@ -469,7 +823,7 @@
         for(let i=state.scatters.length-1;i>=0;i--){ const s=state.scatters[i]; if(!s.el.isConnected){ state.scatters.splice(i,1); continue;} s.updateBoid(state.dtFixed); }
         state.accum-=state.dtFixed;
       }
-      if(state.beetles.length===0 && state.scatters.length===0){ stopEngine(); return; }
+      if(state.beetles.length===0 && state.scatters.length===0 && !state.eyeTracking.active){ stopEngine(); return; }
       state.engineRaf=requestAnimationFrame(loop);
     };
     state.engineRaf=requestAnimationFrame(loop);
@@ -482,8 +836,14 @@
     for(const b of state.beetles) b.dispose(); state.beetles=[];
     for(const s of state.scatters) s.dispose && s.dispose(); state.scatters=[];
     stopEngine();
+    stopEyeTracking(); // Also stop eye tracking
     c.querySelectorAll(`.${BEETLE_LAYER_CLASS}`).forEach(el=>el.remove());
     c.querySelectorAll("img.__screen_bug__").forEach(el=>el.remove());
+    c.querySelectorAll(".__calibration_point__").forEach(el=>el.remove());
+    const instructions = document.getElementById("__calibration_instructions__");
+    if (instructions) instructions.remove();
+    const styles = document.getElementById("__calibration_styles__");
+    if (styles) styles.remove();
     if(!c.firstChild) c.remove();
   }
 
@@ -492,6 +852,9 @@
     if(msg?.type==="INJECT_BUGS") injectBugs(msg.payload||{});
     else if(msg?.type==="DUNG_BEETLE") spawnDungBeetle(msg.payload||{});
     else if(msg?.type==="CLEAR_BUGS") clearBugs();
+    else if(msg?.type==="START_EYE_TRACKING") startEyeTracking(msg.payload||{});
+    else if(msg?.type==="STOP_EYE_TRACKING") stopEyeTracking();
+    else if(msg?.type==="CALIBRATE_EYE_TRACKING") startCalibration();
   });
 
   document.addEventListener("visibilitychange",()=>{ if(!state.running) return; if(!document.hidden) state.lastTs=performance.now(); });
