@@ -6,9 +6,26 @@
   const BEETLE_LAYER_CLASS = "__screen_bugs_beetle_layer__";
 
   // --- Z-LAYERS ---
-  const Z = { BALL: 20, SCATTER: 30, SCATTER_OVER: 35, BEETLE: 40 };
+  const Z = {
+    BALL: 20,           // dung ball canvas
+    EAT: 25,            // termites' black-pixel eat canvas
+    SCATTER: 30,        // scatter bugs normal
+    SCATTER_OVER: 35,   // scatter bug when overlapping dung
+    TERMITE: 34,        // termite sprites (above black pixels, below beetle)
+    SPIDER: 38,         // spiders below beetle, above most others
+    BEETLE: 40          // beetle always on top
+  };
 
-  const state = { beetles: [], scatters: [], engineRaf: null, running: false, lastTs: 0, accum: 0, dtFixed: 1/60 };
+  const state = {
+    beetles: [],
+    scatters: [],
+    termites: [],
+    engineRaf: null,
+    running: false,
+    lastTs: 0,
+    accum: 0,
+    dtFixed: 1/60
+  };
 
   // -------- utils
   const rand = (a,b)=>Math.random()*(b-a)+a;
@@ -32,34 +49,29 @@
     `data:image/svg+xml;utf8,`+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="-16 -16 96 96"><g fill="#3b2f2f" stroke="#3b2f2f" stroke-width="3"><ellipse cx="32" cy="34" rx="18" ry="22"/><ellipse cx="32" cy="18" rx="10" ry="8"/><line x1="18" y1="32" x2="6" y2="26"/><line x1="18" y1="40" x2="6" y2="46"/><line x1="46" y1="32" x2="58" y2="26"/><line x1="46" y1="40" x2="58" y2="46"/><line x1="28" y1="10" x2="22" y2="2"/><line x1="36" y1="10" x2="42" y2="2"/></g></svg>`)
   ];
 
-  // Global boid defaults (per-bug modifiers add personality)
   const BOIDS_CFG = {
-    maxSpeed: 350,          // px/s
-    maxAccel: 150,          // px/s^2
+    maxSpeed: 130,
+    maxAccel: 520,
     neighborRadius: 130,
     separationRadius: 40,
     wSeparation: 1.3,
     wAlignment: 0.8,
-    wCohesion: 0.45,        // lower cohesion => less clumping
-    jitterAccel: 28,        // baseline wander; per-bug adds
+    wCohesion: 0.45,
+    jitterAccel: 28,
 
-    // Orbit-style attraction to dung (each bug has its own ring + phase)
-    attractRadius: 720,     // detection radius (you can set 1020)
-    wAttract: 2,          // global multiplier; per-bug adds
-    orbitMin: 80,           // min ring radius around dung
-    orbitMax: 180,          // max ring radius
-    tangentialBias: 0.35,   // how much to add tangential swirl
+    attractRadius: 520,     // increase to 1020 if you want very long-range attraction
+    wAttract: 1.4,          // bump to 5 for very strong attraction
+    orbitMin: 80,
+    orbitMax: 180,
+    tangentialBias: 0.35,
 
-    // Edges
     wallSoft: 140,
     wallBounce: true,
     minEdgeSpeed: 80,
-
-    // Performance
-    neighborCap: 7          // only consider closest N neighbors
+    neighborCap: 7
   };
 
-  // Spatial grid
+  // Spatial grid for boids
   const grid = {
     cellSize: 120, map: new Map(),
     key(cx,cy){return `${cx}|${cy}`;},
@@ -108,9 +120,8 @@
     let x=rand(0,vw-s), y=rand(0,vh-s);
     let vx=rand(-90,90), vy=rand(-90,90);
 
-    // -------- per-bug personality
+    // per-bug personality
     const p = {
-      // small % variations so they don't sync
       wSep:  BOIDS_CFG.wSeparation * rand(0.9, 1.25),
       wAli:  BOIDS_CFG.wAlignment  * rand(0.7, 1.15),
       wCoh:  BOIDS_CFG.wCohesion   * rand(0.6, 1.1),
@@ -118,14 +129,12 @@
       jitterAccel: BOIDS_CFG.jitterAccel * rand(0.8, 1.4),
       neighborR: BOIDS_CFG.neighborRadius * rand(0.85, 1.15),
       sepR: BOIDS_CFG.separationRadius * rand(0.9, 1.2),
-      // wander (Reynolds): angle & strength
       wanderTheta: rand(0, Math.PI*2),
-      wanderRate: rand(1.5, 3.2),      // rad/s change
-      wanderStrength: rand(80, 160),   // px/s^2
-      // orbit assignment
+      wanderRate: rand(1.5, 3.2),
+      wanderStrength: rand(80, 160),
       orbitR: rand(BOIDS_CFG.orbitMin, BOIDS_CFG.orbitMax),
       orbitPhi: rand(0, Math.PI*2),
-      orbitSpeed: rand(0.6, 1.4),      // rad/s around dung
+      orbitSpeed: rand(0.6, 1.4),
       tangentialBias: BOIDS_CFG.tangentialBias * rand(0.7, 1.3)
     };
 
@@ -139,9 +148,8 @@
         vw=window.innerWidth; vh=window.innerHeight;
         const px=this.x, py=this.y;
 
-        // --- neighbors -> collect nearest up to cap
+        // neighbors (closest few)
         const candidates=grid.neighbors(this, p.neighborR);
-        // compute squared distances and pick closest few
         const neigh = [];
         for(let i=0;i<candidates.length;i++){
           const n=candidates[i]; if(n===this) continue;
@@ -152,7 +160,6 @@
         neigh.sort((a,b)=>a.d2-b.d2);
         if(neigh.length>BOIDS_CFG.neighborCap) neigh.length = BOIDS_CFG.neighborCap;
 
-        // accumulators
         let sepX=0, sepY=0, aliX=0, aliY=0, cohX=0, cohY=0;
         const ncount = neigh.length;
         for(let i=0;i<ncount;i++){
@@ -161,7 +168,6 @@
           const d2 = neigh[i].d2;
           if(d2 < p.sepR*p.sepR){
             const d = Math.sqrt(d2)||1;
-            // inverse falloff for stronger push when too close
             sepX -= dx/d * (p.sepR/Math.max(d,1));
             sepY -= dy/d * (p.sepR/Math.max(d,1));
           }
@@ -174,34 +180,28 @@
           cohX=(cohX/ncount)-px; cohY=(cohY/ncount)-py; ({x:cohX,y:cohY}=norm(cohX,cohY));
         }
 
-        // --- wander (Reynolds)
+        // wander
         p.wanderTheta += (rand(-1,1)*p.wanderRate) * dt;
         let wx = Math.cos(p.wanderTheta), wy = Math.sin(p.wanderTheta);
         wx *= p.wanderStrength; wy *= p.wanderStrength;
 
-        // --- attraction (SEEK to personal orbit point + tangential swirl)
+        // attraction to personal orbit point around dung
         let attAx=0, attAy=0, dungBias=0;
         const nd=nearestDung(px,py);
         if(nd){
-          // advance personal orbit phase
           p.orbitPhi += p.orbitSpeed * dt;
           const goalX = nd.x + Math.cos(p.orbitPhi) * (nd.r + p.orbitR);
           const goalY = nd.y + Math.sin(p.orbitPhi) * (nd.r + p.orbitR);
-          // desired velocity toward orbit point
           const toGX = goalX - px, toGY = goalY - py;
           const dG = Math.hypot(toGX,toGY)||1;
           const desiredX = (toGX/dG) * BOIDS_CFG.maxSpeed;
           const desiredY = (toGY/dG) * BOIDS_CFG.maxSpeed;
-          // add a small tangential component (perpendicular) for swirl
           const tx = -toGY/dG, ty = toGX/dG;
           const swirlX = tx * BOIDS_CFG.maxSpeed * p.tangentialBias;
           const swirlY = ty * BOIDS_CFG.maxSpeed * p.tangentialBias;
-
           let steerX = (desiredX + swirlX) - vx;
           let steerY = (desiredY + swirlY) - vy;
           ({x:steerX, y:steerY} = limit(steerX, steerY, BOIDS_CFG.maxAccel));
-
-          // distance-based gain: strong inside radius, faint tail beyond
           const d = Math.hypot(nd.x - px, nd.y - py);
           const near = Math.max(0, 1 - d / BOIDS_CFG.attractRadius);
           const far  = 1 / (1 + 0.004 * d);
@@ -211,11 +211,11 @@
           dungBias = gain;
         }
 
-        // --- combine accelerations (pixel units)
+        // combine accelerations
         let ax = p.wSep*sepX + p.wAli*aliX + p.wCoh*cohX + attAx + wx;
         let ay = p.wSep*sepY + p.wAli*aliY + p.wCoh*cohY + attAy + wy;
 
-        // --- soft edge steer (relaxed if dung is pulling)
+        // soft edge steer (relaxed if chasing dung)
         const soften = dungBias > 0.25 ? 0.35 : 1.0;
         const m = BOIDS_CFG.wallSoft;
         if(px < m) ax += soften * (m - px) / m * BOIDS_CFG.maxAccel * 0.15;
@@ -223,25 +223,19 @@
         if(px > vw - m) ax -= soften * (px - (vw - m)) / m * BOIDS_CFG.maxAccel * 0.15;
         if(py > vh - m) ay -= soften * (py - (vh - m)) / m * BOIDS_CFG.maxAccel * 0.15;
 
-        // --- per-bug extra jitter
-        let jx = rand(-1,1), jy = rand(-1,1);
-        ({x:jx,y:jy}=norm(jx,jy));
-        jx *= (p.jitterAccel); jy *= (p.jitterAccel);
-        ax += jx; ay += jy;
-
-        // --- integrate
+        // integrate
         ({x:ax,y:ay}=limit(ax,ay,BOIDS_CFG.maxAccel));
         vx += ax * dt; vy += ay * dt;
         ({x:vx,y:vy}=limit(vx,vy,BOIDS_CFG.maxSpeed));
         x += vx * dt; y += vy * dt;
 
-        // --- hard bounce
+        // --- hard bounce (FIXED)
         if(BOIDS_CFG.wallBounce){
           const minS=BOIDS_CFG.minEdgeSpeed;
           if(x<0){ x=0; vx=Math.abs(vx)<minS?minS:Math.abs(vx); }
           if(y<0){ y=0; vy=Math.abs(vy)<minS?minS:Math.abs(vy); }
-          if(x>vw-this.s){ x=vw-this.s; vx=-(Math.abs(vx)<minS?minS:Math.abs(vx)); }
-          if(y>vh-this.s){ y=vh-this.s; vy=-(Math.abs(vy)<minS?minS:Math.abs(vy)); }
+          if(x>vw - this.s){ x=vw - this.s; vx=-(Math.abs(vx)<minS?minS:Math.abs(vx)); }
+          if(y>vh - this.s){ y=vh - this.s; vy=-(Math.abs(vy)<minS?minS:Math.abs(vy)); }
         }else{
           x=clamp(x,0,vw-this.s); y=clamp(y,0,vh-this.s);
         }
@@ -250,7 +244,7 @@
         const rot=(Math.atan2(vy,vx)*180)/Math.PI;
         this.el.style.left=`${x}px`; this.el.style.top=`${y}px`; this.el.style.transform=`rotate(${rot}deg)`;
 
-        // --- Lift bug above dung ball when overlapping ---
+        // z-lift when overlapping dung ball
         let overDung = false;
         if (state.beetles.length) {
           const cx = this.x, cy = this.y;
@@ -264,7 +258,6 @@
         }
         this.el.style.zIndex = String(overDung ? Z.SCATTER_OVER : Z.SCATTER);
 
-        // expose vel for neighbors
         this._vx=vx; this._vy=vy;
       },
 
@@ -273,6 +266,151 @@
   }
 
   function injectBugs({count=12,size=48}={}){ for(let i=0;i<count;i++) state.scatters.push(createScatterBug({size})); startEngine(); }
+
+  // =================== TERMITES (two-segment body, eat screen by painting black) ===================
+  const termites = {
+    list: [],
+    eatCanvas: null,
+    eatCtx: null
+  };
+
+  function ensureEatCanvas(){
+    if (termiteEatCtx()) return termites.eatCtx;
+    const container = ensureContainer();
+    const cvs = document.createElement("canvas");
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    cvs.width = Math.floor(window.innerWidth * dpr);
+    cvs.height = Math.floor(window.innerHeight * dpr);
+    Object.assign(cvs.style, {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      width: `${window.innerWidth}px`,
+      height: `${window.innerHeight}px`,
+      zIndex: String(Z.EAT),
+      pointerEvents: "none"
+    });
+    const ctx = cvs.getContext("2d", { alpha: true });
+    ctx.scale(dpr, dpr);
+    termites.eatCanvas = cvs;
+    termites.eatCtx = ctx;
+    container.appendChild(cvs);
+
+    window.addEventListener("resize", () => {
+      if (!termites.eatCanvas) return;
+      const dpr2 = Math.max(1, window.devicePixelRatio || 1);
+      termites.eatCanvas.width = Math.floor(window.innerWidth * dpr2);
+      termites.eatCanvas.height = Math.floor(window.innerHeight * dpr2);
+      Object.assign(termites.eatCanvas.style, { width: `${window.innerWidth}px`, height: `${window.innerHeight}px` });
+      const c2 = termites.eatCanvas.getContext("2d", { alpha: true });
+      c2.scale(dpr2, dpr2);
+      termites.eatCtx = c2; // clears old drawing on resize
+    }, { passive: true });
+
+    return ctx;
+  }
+
+  function termiteEatCtx(){ return termites.eatCanvas && termites.eatCanvas.isConnected ? termites.eatCtx : null; }
+
+  const TERMITE_CFG = {
+    speed: 80,            // halved speed (was 160)
+    turnJitter: 3.2,      // rad/s random heading noise
+    accel: 380,           // px/s^2 steering to heading
+    eatSizeMin: 2,        // “mouth” radius
+    eatSizeMax: 4,
+    bouncePadding: 2
+  };
+
+  // two-segment (abdomen + thorax/head) termite visuals
+  function createTermite({ size = 10 } = {}) {
+    ensureEatCanvas();
+    const container = ensureContainer();
+    const el = document.createElement("div");
+    Object.assign(el.style, {
+      position: "absolute",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transform: "translate(-50%, -50%) rotate(0deg)",
+      left: "0px",
+      top: "0px",
+      zIndex: String(Z.TERMITE),
+      pointerEvents: "none",
+      willChange: "transform,left,top"
+    });
+    el.className = "__screen_termite__";
+
+    // abdomen (bigger)
+    const abdomen = document.createElement("div");
+    Object.assign(abdomen.style, {
+      width: `${size}px`,
+      height: `${size * 0.75}px`,
+      borderRadius: "50%",
+      background: "rgba(255,80,80,0.95)",
+      boxShadow: "0 1px 1px rgba(0,0,0,0.25)",
+      marginRight: `${size * 0.15}px`
+    });
+
+    // thorax/head (smaller)
+    const thorax = document.createElement("div");
+    Object.assign(thorax.style, {
+      width: `${size * 0.6}px`,
+      height: `${size * 0.5}px`,
+      borderRadius: "50%",
+      background: "rgba(230,60,60,0.95)",
+      boxShadow: "0 1px 1px rgba(0,0,0,0.2)"
+    });
+
+    el.appendChild(abdomen);
+    el.appendChild(thorax);
+    container.appendChild(el);
+
+    let x = rand(20, window.innerWidth - 20);
+    let y = rand(20, window.innerHeight - 20);
+    let heading = rand(0, Math.PI * 2);
+    let vx = Math.cos(heading) * TERMITE_CFG.speed * 0.6;
+    let vy = Math.sin(heading) * TERMITE_CFG.speed * 0.6;
+    const mouth = rand(TERMITE_CFG.eatSizeMin, TERMITE_CFG.eatSizeMax);
+
+    return {
+      el,
+      update(dt){
+        heading += rand(-TERMITE_CFG.turnJitter, TERMITE_CFG.turnJitter) * dt;
+
+        const desiredX = Math.cos(heading) * TERMITE_CFG.speed;
+        const desiredY = Math.sin(heading) * TERMITE_CFG.speed;
+        let ax = desiredX - vx, ay = desiredY - vy;
+        ({x:ax,y:ay} = limit(ax, ay, TERMITE_CFG.accel));
+        vx += ax * dt; vy += ay * dt;
+
+        x += vx * dt; y += vy * dt;
+
+        // bounce at edges
+        const pad = TERMITE_CFG.bouncePadding;
+        if (x < pad) { x = pad; vx = Math.abs(vx); heading = Math.atan2(vy, vx); }
+        if (y < pad) { y = pad; vy = Math.abs(vy); heading = Math.atan2(vy, vx); }
+        if (x > window.innerWidth - pad) { x = window.innerWidth - pad; vx = -Math.abs(vx); heading = Math.atan2(vy, vx); }
+        if (y > window.innerHeight - pad) { y = window.innerHeight - pad; vy = -Math.abs(vy); heading = Math.atan2(vy, vx); }
+
+        // draw "eaten" pixels (black)
+        const g = termiteEatCtx() || ensureEatCanvas();
+        g.fillStyle = "#000";
+        g.beginPath(); g.arc(x, y, mouth, 0, Math.PI*2); g.fill();
+
+        // pose sprite
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.transform = `translate(-50%, -50%) rotate(${(Math.atan2(vy, vx)*180)/Math.PI}deg)`;
+      },
+      dispose(){ try{el.remove();}catch{} }
+    };
+  }
+
+  function releaseTermites({ count = 20, size = 10 } = {}) {
+    ensureEatCanvas();
+    for (let i = 0; i < count; i++) termites.list.push(createTermite({ size }));
+    startEngine();
+  }
 
   // =================== DUNG BEETLE (top-down rolling ball, perf-cached) ===================
   const TEX_SZ=128, noiseSrc=document.createElement("canvas"), crackSrc=document.createElement("canvas");
@@ -310,7 +448,7 @@
       for(let s=0;s<segs;s++){
         ang+=rand(-0.45,0.45);
         const len=rand(4,10);
-        x=(x+Math.cos(ang)*len+TEX_SZ)%TEX_SZ; y=(y+Math.sin(ang)*len+TEX_SZ)%TEX_SZ;
+        x=(x+Math.cos(ang)*len+TEX_SZ)%TEX_SZ; y=(y+Math.sin(ang)*len)+TEX_SZ; y%=TEX_SZ;
         cg.lineTo(x,y);
         if(Math.random()<0.12){
           cg.save(); cg.lineWidth=lw*0.7;
@@ -455,7 +593,200 @@
     startEngine();
   }
 
-  // =================== Engine loop (rebuild grid each step)
+  // =================== SPIDERS (8 legs, each with 3 animated bones via SVG hierarchy) ===================
+  const __SPIDERS__ = { list: [] };
+  const SPIDER_CFG = {
+    bodySize: 42,
+    legLen: { coxa: 16, femur: 22, tibia: 22 },
+    legWidth: 4,
+    color: "#1b1b1b",
+    maxSpeed: 120,
+    accel: 420,
+    turnJitter: 1.8,
+    zIndex: Z.SPIDER
+  };
+
+  function createSpider({ x, y, size = SPIDER_CFG.bodySize } = {}) {
+    const container = ensureContainer();
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", String(size * 2));
+    svg.setAttribute("height", String(size * 2));
+    svg.setAttribute("viewBox", `${-size} ${-size} ${size * 2} ${size * 2}`);
+    Object.assign(svg.style, {
+      position: "absolute",
+      left: "0px",
+      top: "0px",
+      transform: "translate(-50%, -50%)",
+      pointerEvents: "none",
+      zIndex: String(SPIDER_CFG.zIndex),
+      willChange: "transform"
+    });
+
+    const bodyG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const abdomen = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+    abdomen.setAttribute("cx", "4");
+    abdomen.setAttribute("cy", "2");
+    abdomen.setAttribute("rx", String(size * 0.38));
+    abdomen.setAttribute("ry", String(size * 0.33));
+    abdomen.setAttribute("fill", SPIDER_CFG.color);
+    const ceph = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+    ceph.setAttribute("cx", String(-size * 0.18));
+    ceph.setAttribute("cy", String(-size * 0.06));
+    ceph.setAttribute("rx", String(size * 0.22));
+    ceph.setAttribute("ry", String(size * 0.18));
+    ceph.setAttribute("fill", SPIDER_CFG.color);
+    bodyG.appendChild(abdomen); bodyG.appendChild(ceph);
+
+    // legs: proper hierarchy with separate groups for yaw, coxa, femur, tibia
+    const legs = [];
+    const anchors = [];
+    const shoulderRadius = size * 0.38;
+
+    for (let i = 0; i < 8; i++) {
+      const angle = (-Math.PI / 2) + (i - 3.5) * (Math.PI / 7) * 1.15;
+      const ax = Math.cos(angle) * shoulderRadius;
+      const ay = Math.sin(angle) * shoulderRadius;
+      const angleDeg = (angle * 180) / Math.PI;
+      anchors.push({ ax, ay, baseAngle: angle });
+
+      const legRoot = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      legRoot.setAttribute("transform", `translate(${ax} ${ay})`);
+
+      const yawG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      yawG.setAttribute("transform", `rotate(${angleDeg})`);
+
+      const coxaG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      coxaG.setAttribute("transform", "rotate(0)");
+
+      const coxa = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      coxa.setAttribute("x", "0");
+      coxa.setAttribute("y", String(-SPIDER_CFG.legWidth / 2));
+      coxa.setAttribute("width", String(SPIDER_CFG.legLen.coxa));
+      coxa.setAttribute("height", String(SPIDER_CFG.legWidth));
+      coxa.setAttribute("rx", String(SPIDER_CFG.legWidth / 2));
+      coxa.setAttribute("fill", SPIDER_CFG.color);
+
+      const femurG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      femurG.setAttribute("transform", `translate(${SPIDER_CFG.legLen.coxa} 0) rotate(0)`);
+
+      const femur = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      femur.setAttribute("x", "0");
+      femur.setAttribute("y", String(-SPIDER_CFG.legWidth / 2));
+      femur.setAttribute("width", String(SPIDER_CFG.legLen.femur));
+      femur.setAttribute("height", String(SPIDER_CFG.legWidth));
+      femur.setAttribute("rx", String(SPIDER_CFG.legWidth / 2));
+      femur.setAttribute("fill", SPIDER_CFG.color);
+
+      const tibiaG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      tibiaG.setAttribute("transform", `translate(${SPIDER_CFG.legLen.femur} 0) rotate(0)`);
+
+      const tibia = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      tibia.setAttribute("x", "0");
+      tibia.setAttribute("y", String(-SPIDER_CFG.legWidth / 2));
+      tibia.setAttribute("width", String(SPIDER_CFG.legLen.tibia));
+      tibia.setAttribute("height", String(SPIDER_CFG.legWidth));
+      tibia.setAttribute("rx", String(SPIDER_CFG.legWidth / 2));
+      tibia.setAttribute("fill", SPIDER_CFG.color);
+
+      tibiaG.appendChild(tibia);
+      femurG.appendChild(femur);
+      femurG.appendChild(tibiaG);
+      coxaG.appendChild(coxa);
+      coxaG.appendChild(femurG);
+      yawG.appendChild(coxaG);
+      legRoot.appendChild(yawG);
+      bodyG.appendChild(legRoot);
+
+      legs.push({
+        legRoot, yawG, coxaG, femurG, tibiaG,
+        phase: (i % 2 === 0 ? 0 : Math.PI),
+        noise: Math.random() * Math.PI * 2,
+        baseYawDeg: angleDeg
+      });
+    }
+
+    svg.appendChild(bodyG);
+    container.appendChild(svg);
+
+    let px = (typeof x === "number") ? x : Math.random() * (window.innerWidth - 60) + 30;
+    let py = (typeof y === "number") ? y : Math.random() * (window.innerHeight - 60) + 30;
+    let heading = Math.random() * Math.PI * 2;
+    let vx = Math.cos(heading) * (SPIDER_CFG.maxSpeed * 0.3);
+    let vy = Math.sin(heading) * (SPIDER_CFG.maxSpeed * 0.3);
+    let gaitTime = 0;
+
+    function setLegAngles(leg, baseYawDeg, coxaDeg, femurDeg, tibiaDeg) {
+      leg.yawG.setAttribute("transform", `rotate(${baseYawDeg})`);
+      leg.coxaG.setAttribute("transform", `rotate(${coxaDeg})`);
+      leg.femurG.setAttribute("transform", `translate(${SPIDER_CFG.legLen.coxa} 0) rotate(${femurDeg})`);
+      leg.tibiaG.setAttribute("transform", `translate(${SPIDER_CFG.legLen.femur} 0) rotate(${tibiaDeg})`);
+    }
+
+    function updateLegs(dt) {
+      gaitTime += dt;
+      const speed = Math.hypot(vx, vy);
+      const stepHz = 1.2 + (speed / (SPIDER_CFG.maxSpeed + 1)) * 1.0;
+      const phaseAdvance = 2 * Math.PI * stepHz * dt;
+
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i];
+        leg.phase += phaseAdvance;
+
+        const swing = Math.sin(leg.phase + leg.noise * 0.2);
+        const lift  = Math.max(0, Math.sin(leg.phase + Math.PI / 2)) ** 1.2;
+
+        const baseYawDeg = leg.baseYawDeg; // keep outward splay stable
+        const coxaDeg  = swing * 18;
+        const femurDeg = -10 + swing * 14 - lift * 12;
+        const tibiaDeg =  8  - swing * 10 - lift * 16;
+
+        setLegAngles(leg, baseYawDeg, coxaDeg, femurDeg, tibiaDeg);
+      }
+    }
+
+    function updatePose() {
+      svg.style.left = `${px}px`;
+      svg.style.top  = `${py}px`;
+      svg.style.transform = `translate(-50%, -50%) rotate(${(Math.atan2(vy, vx) * 180) / Math.PI}deg)`;
+    }
+
+    return {
+      el: svg,
+      update(dt) {
+        // wander & steer
+        heading += (Math.random() * 2 - 1) * SPIDER_CFG.turnJitter * dt;
+        const desiredX = Math.cos(heading) * SPIDER_CFG.maxSpeed;
+        const desiredY = Math.sin(heading) * SPIDER_CFG.maxSpeed;
+        let ax = desiredX - vx, ay = desiredY - vy;
+        const aLen = Math.hypot(ax, ay) || 1;
+        const aMax = SPIDER_CFG.accel;
+        if (aLen > aMax) { ax = (ax / aLen) * aMax; ay = (ay / aLen) * aMax; }
+        vx += ax * dt; vy += ay * dt;
+
+        // integrate
+        px += vx * dt; py += vy * dt;
+
+        // bounds
+        const pad = 12;
+        if (px < pad) { px = pad; vx = Math.abs(vx); heading = Math.atan2(vy, vx); }
+        if (py < pad) { py = pad; vy = Math.abs(vy); heading = Math.atan2(vy, vx); }
+        if (px > window.innerWidth - pad) { px = window.innerWidth - pad; vx = -Math.abs(vx); heading = Math.atan2(vy, vx); }
+        if (py > window.innerHeight - pad) { py = window.innerHeight - pad; vy = -Math.abs(vy); heading = Math.atan2(vy, vx); }
+
+        updateLegs(dt);
+        updatePose();
+      },
+      dispose() { try { svg.remove(); } catch {} }
+    };
+  }
+
+  function releaseSpiders({ count = 1, size = SPIDER_CFG.bodySize } = {}) {
+    for (let i = 0; i < count; i++) __SPIDERS__.list.push(createSpider({ size }));
+    startEngine();
+  }
+
+  // =================== Engine loop (fixed-step; rebuild grid each step)
   function startEngine(){
     if(state.running) return; state.running=true; state.lastTs=performance.now(); state.accum=0;
     const loop=(ts)=>{
@@ -464,12 +795,28 @@
       if(document.hidden){ state.engineRaf=requestAnimationFrame(loop); return; }
       state.accum+=dt;
       while(state.accum>=state.dtFixed){
+        // grid for scatter boids
         grid.clear(); for(let i=0;i<state.scatters.length;i++) grid.insert(state.scatters[i]);
+
+        // beetles
         for(let i=state.beetles.length-1;i>=0;i--){ const b=state.beetles[i]; if(!b.alive){ state.beetles.splice(i,1); continue;} b.update(state.dtFixed); }
+
+        // scatter boids
         for(let i=state.scatters.length-1;i>=0;i--){ const s=state.scatters[i]; if(!s.el.isConnected){ state.scatters.splice(i,1); continue;} s.updateBoid(state.dtFixed); }
+
+        // termites
+        for(let i=termites.list.length-1;i>=0;i--){ const t=termites.list[i]; if(!t.el.isConnected){ termites.list.splice(i,1); continue;} t.update(state.dtFixed); }
+
+        // spiders
+        for (let i = __SPIDERS__.list.length - 1; i >= 0; i--) {
+          const sp = __SPIDERS__.list[i];
+          if (!sp.el?.isConnected) { __SPIDERS__.list.splice(i,1); continue; }
+          sp.update(state.dtFixed);
+        }
+
         state.accum-=state.dtFixed;
       }
-      if(state.beetles.length===0 && state.scatters.length===0){ stopEngine(); return; }
+      if(state.beetles.length===0 && state.scatters.length===0 && termites.list.length===0 && __SPIDERS__.list.length===0){ stopEngine(); return; }
       state.engineRaf=requestAnimationFrame(loop);
     };
     state.engineRaf=requestAnimationFrame(loop);
@@ -479,11 +826,26 @@
   // =================== Clear
   function clearBugs(){
     const c=document.getElementById(CONTAINER_ID); if(!c) return;
+
     for(const b of state.beetles) b.dispose(); state.beetles=[];
     for(const s of state.scatters) s.dispose && s.dispose(); state.scatters=[];
+    for(const t of termites.list) t.dispose && t.dispose(); termites.list=[];
+
+    // remove eat canvas (clears all black pixels)
+    if (termites.eatCanvas && termites.eatCanvas.isConnected) { try { termites.eatCanvas.remove(); } catch {} }
+    termites.eatCanvas = null; termites.eatCtx = null;
+
+    // spiders
+    for (const sp of __SPIDERS__.list) { try { sp.dispose(); } catch {} }
+    __SPIDERS__.list.length = 0;
+
     stopEngine();
+
     c.querySelectorAll(`.${BEETLE_LAYER_CLASS}`).forEach(el=>el.remove());
     c.querySelectorAll("img.__screen_bug__").forEach(el=>el.remove());
+    c.querySelectorAll(".__screen_termite__").forEach(el=>el.remove());
+    c.querySelectorAll("svg").forEach(el=>{ if (el.parentElement===c || el.closest(`#${CONTAINER_ID}`)) el.remove(); });
+
     if(!c.firstChild) c.remove();
   }
 
@@ -491,6 +853,8 @@
   chrome.runtime.onMessage.addListener((msg)=>{
     if(msg?.type==="INJECT_BUGS") injectBugs(msg.payload||{});
     else if(msg?.type==="DUNG_BEETLE") spawnDungBeetle(msg.payload||{});
+    else if(msg?.type==="RELEASE_TERMITES") releaseTermites(msg.payload||{});
+    else if(msg?.type==="RELEASE_SPIDERS") releaseSpiders(msg.payload||{});
     else if(msg?.type==="CLEAR_BUGS") clearBugs();
   });
 

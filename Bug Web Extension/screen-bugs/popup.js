@@ -38,6 +38,26 @@ $("releaseBeetle").addEventListener("click", async () => {
     });
   });
 });
+    // (ADD) helper if you don't already have one
+  async function __sendToActiveTab(message) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    chrome.tabs.sendMessage(tab.id, message);
+  }
+
+  // (ADD) termites button
+  document.getElementById('releaseTermitesBtn')?.addEventListener('click', async () => {
+    const count = parseInt(document.getElementById('termiteCount')?.value || '20', 10);
+    const size  = parseInt(document.getElementById('termiteSize')?.value  || '10', 10);
+    await __sendToActiveTab({ type: 'RELEASE_TERMITES', payload: { count, size } });
+  });
+
+document.getElementById('releaseSpidersBtn')?.addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  const count = 1; // or read from an input
+  chrome.tabs.sendMessage(tab.id, { type: 'RELEASE_SPIDERS', payload: { count, size: 42 } });
+});
 
 $("clear").addEventListener("click", async () => {
   await withActiveTab(async (tab) => {

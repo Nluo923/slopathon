@@ -54,6 +54,30 @@
     </div>
     <button id="releaseBeetle">Release dung beetle</button>
 
+    <section>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <strong>Termites</strong><small style="color:#777;">light red, eat pixels</small>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <label for="termiteCount" style="font-size:12px;color:#555;">Count</label>
+      <input id="termiteCount" type="number" min="1" max="400" step="1" value="20" style="width:84px;padding:6px 8px;border:1px solid #ddd;border-radius:8px;">
+      <label for="termiteSize" style="font-size:12px;color:#555;">Size</label>
+      <input id="termiteSize" type="number" min="4" max="20" step="1" value="10" style="width:84px;padding:6px 8px;border:1px solid #ddd;border-radius:8px;">
+    </div>
+    <div style="margin-top:8px;">
+      <button id="releaseTermitesBtn" style="padding:8px 10px;border-radius:10px;border:1px solid #ddd;background:#111;cursor:pointer;">Release Termites</button>
+    </div>
+  </section>
+
+  <section>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+    <strong>Spiders</strong><small style="color:#777;">8 legs, skeletal animation</small>
+  </div>
+  <button id="releaseSpidersBtn" style="padding:8px 10px;border-radius:10px;border:1px solid #111;background:#fff;cursor:pointer;">Release Spider</button>
+  </section>
+
+
+
     <button id="clear" class="secondary">Clear bugs</button>
 
     <div class="hint">Shortcuts: <b>Alt+B</b> to release, <b>Alt+C</b> to clear. Press <b>Esc</b> to clear on a page.</div>
