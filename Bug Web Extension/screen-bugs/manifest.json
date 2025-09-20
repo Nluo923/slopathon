@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Screen Bugs",
+  "version": "1.0.0",
+  "description": "Paste small pictures of bugs on the screen (for fun/pranks).",
+  "permissions": ["scripting", "activeTab"],
+  "action": {
+    "default_title": "Screen Bugs",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "release-bugs": {
+      "suggested_key": { "default": "Alt+B" },
+      "description": "Release bugs on the current tab"
+    },
+    "clear-bugs": {
+      "suggested_key": { "default": "Alt+C" },
+      "description": "Clear bugs from the current tab"
+    }
+  }
+}

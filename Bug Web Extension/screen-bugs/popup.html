@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Screen Bugs</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        margin: 12px;
+        width: 260px;
+      }
+      .row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
+      label { font-size: 13px; }
+      input[type="number"] { width: 90px; }
+      input[type="range"] { width: 140px; }
+      button {
+        width: 100%; padding: 10px; margin-top: 10px; border: none; border-radius: 8px;
+        background: #111; color: #fff; cursor: pointer; font-weight: 600;
+      }
+      button.secondary { background: #e5e7eb; color: #111; }
+      .hint { color: #6b7280; font-size: 12px; margin-top: 6px; }
+      .section-title { margin: 14px 0 6px 0; font-weight: 700; font-size: 14px; }
+      hr { border: 0; height: 1px; background: #eee; margin: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <h3 style="margin:0 0 6px 0;">🐞 Screen Bugs</h3>
+
+    <div class="section-title">Scatter bugs</div>
+    <div class="row">
+      <label for="count">Bug count</label>
+      <input id="count" type="number" min="1" max="200" value="12" />
+    </div>
+    <div class="row">
+      <label for="size">Size (px)</label>
+      <input id="size" type="number" min="16" max="256" value="48" />
+    </div>
+    <div class="row">
+      <label for="animate">Crawl animation</label>
+      <input id="animate" type="checkbox" checked />
+    </div>
+    <button id="release">Release the bugs</button>
+
+    <hr/>
+
+    <div class="section-title">Dung beetle</div>
+    <div class="row">
+      <label for="beetleSpeed">Speed</label>
+      <input id="beetleSpeed" type="range" min="50" max="400" value="180" />
+    </div>
+    <div class="row">
+      <label for="maxBall">Max ball (px)</label>
+      <input id="maxBall" type="number" min="40" max="320" value="160" />
+    </div>
+    <button id="releaseBeetle">Release dung beetle</button>
+
+    <button id="clear" class="secondary">Clear bugs</button>
+
+    <div class="hint">Shortcuts: <b>Alt+B</b> to release, <b>Alt+C</b> to clear. Press <b>Esc</b> to clear on a page.</div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
