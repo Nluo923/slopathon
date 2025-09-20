@@ -42,6 +42,8 @@ function draw(x, y, blink) {
   ctx.fillStyle = 'red';
   let pos = uvToCanvasClipped(x, y);
   if (pos) {
+    ctx.font = "16px serif";
+    ctx.fillText(`[${x}, ${y}]`, pos.x, pos.y + 50);
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
     ctx.fill();

@@ -22,13 +22,13 @@ if args.model is not None and os.path.exists(args.model):
 else:
 	run_9_point_calibration(estimator)
 	# run_lissajous_calibration(estimator)
-	estimator.save_model("gaze_model.pk1")
+	estimator.save_model("gaze_model.pk1" if args.model is None else args.model)
 	print("saved model")
 	sys.exit(0)
 
-k = make_kalman()
-smoother = KalmanSmoother(k)
-smoother.tune(estimator, camera_index=0)
+# k = make_kalman()
+# smoother = KalmanSmoother(k)
+# smoother.tune(estimator, camera_index=0)
 
 cap = cv2.VideoCapture(0)
 screen = get_monitors()[0]
@@ -55,7 +55,7 @@ async def handler(ws):
 		while True:
 			payload = json.dumps(read_gaze())
 			await ws.send(payload)
-			await asyncio.sleep(1/60)
+			await asyncio.sleep(1/120)
 	except ConnectionClosed:
 		print("connection closed", ws)
 
