@@ -59,8 +59,8 @@
     wCohesion: 0.45,
     jitterAccel: 28,
 
-    attractRadius: 520,     // increase to 1020 if you want very long-range attraction
-    wAttract: 1.4,          // bump to 5 for very strong attraction
+    attractRadius: 520,
+    wAttract: 1.4,
     orbitMin: 80,
     orbitMax: 180,
     tangentialBias: 0.35,
@@ -274,46 +274,52 @@
     eatCtx: null
   };
 
+  // robust DPR-aware eat canvas
   function ensureEatCanvas(){
     if (termiteEatCtx()) return termites.eatCtx;
+
     const container = ensureContainer();
     const cvs = document.createElement("canvas");
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    cvs.width = Math.floor(window.innerWidth * dpr);
-    cvs.height = Math.floor(window.innerHeight * dpr);
-    Object.assign(cvs.style, {
-      position: "absolute",
-      left: "0",
-      top: "0",
-      width: `${window.innerWidth}px`,
-      height: `${window.innerHeight}px`,
-      zIndex: String(Z.EAT),
-      pointerEvents: "none"
-    });
-    const ctx = cvs.getContext("2d", { alpha: true });
-    ctx.scale(dpr, dpr);
+
+    const applyCss = () => {
+      Object.assign(cvs.style, {
+        position: "absolute",
+        left: "0",
+        top: "0",
+        width: `${window.innerWidth}px`,
+        height: `${window.innerHeight}px`,
+        zIndex: String(Z.EAT),
+        pointerEvents: "none"
+      });
+    };
+
+    const setDpr = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      cvs.width = Math.floor(window.innerWidth * dpr);
+      cvs.height = Math.floor(window.innerHeight * dpr);
+      const ctx = cvs.getContext("2d", { alpha: true });
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      termites.eatCtx = ctx;
+    };
+
+    applyCss(); setDpr();
     termites.eatCanvas = cvs;
-    termites.eatCtx = ctx;
     container.appendChild(cvs);
 
-    window.addEventListener("resize", () => {
-      if (!termites.eatCanvas) return;
-      const dpr2 = Math.max(1, window.devicePixelRatio || 1);
-      termites.eatCanvas.width = Math.floor(window.innerWidth * dpr2);
-      termites.eatCanvas.height = Math.floor(window.innerHeight * dpr2);
-      Object.assign(termites.eatCanvas.style, { width: `${window.innerWidth}px`, height: `${window.innerHeight}px` });
-      const c2 = termites.eatCanvas.getContext("2d", { alpha: true });
-      c2.scale(dpr2, dpr2);
-      termites.eatCtx = c2; // clears old drawing on resize
-    }, { passive: true });
-
-    return ctx;
+    if (!ensureEatCanvas._boundResize) {
+      ensureEatCanvas._boundResize = true;
+      window.addEventListener("resize", () => {
+        if (!termites.eatCanvas) return;
+        applyCss(); setDpr(); // clears by design on resize
+      }, { passive: true });
+    }
+    return termites.eatCtx;
   }
 
   function termiteEatCtx(){ return termites.eatCanvas && termites.eatCanvas.isConnected ? termites.eatCtx : null; }
 
   const TERMITE_CFG = {
-    speed: 80,            // halved speed (was 160)
+    speed: 80,            // halved speed
     turnJitter: 3.2,      // rad/s random heading noise
     accel: 380,           // px/s^2 steering to heading
     eatSizeMin: 2,        // “mouth” radius
@@ -475,23 +481,50 @@
     if(VIGNETTE_LRU.length>VIGNETTE_MAX) vignetteCache.delete(VIGNETTE_LRU.shift());
     return c;
   }
+
+  // Lighter, warmer dung + safer 'T' scope + softer overlays
   function drawBallTopDown(ctx,d,rollDeg){
     const {noise,cracks}=getPatterns(ctx);
+    const T = d * 1.6; // used in both overlays
     ctx.clearRect(0,0,d,d);
     ctx.save(); ctx.beginPath(); ctx.arc(d/2,d/2,d/2,0,Math.PI*2); ctx.closePath(); ctx.clip();
-    ctx.fillStyle="#5e3d23"; ctx.fillRect(0,0,d,d);
-    ctx.save(); ctx.translate(d/2,d/2); ctx.rotate((rollDeg*Math.PI)/180); ctx.globalCompositeOperation="multiply";
-    ctx.fillStyle=noise; const T=d*1.6; ctx.fillRect(-T/2,-T/2,T,T); ctx.restore();
-    ctx.save(); ctx.translate(d/2,d/2); ctx.rotate((rollDeg*Math.PI)/180); ctx.globalCompositeOperation="multiply"; ctx.globalAlpha=0.75;
-    ctx.fillStyle=cracks; ctx.fillRect(-T/2,-T/2,T,T); ctx.globalAlpha=1; ctx.restore();
-    ctx.globalCompositeOperation="multiply"; ctx.drawImage(getVignette(d),0,0);
+
+    // base fill (lighter brown)
+    ctx.fillStyle="#7a4a24";
+    ctx.fillRect(0,0,d,d);
+
+    // noise overlay (slightly reduced strength)
+    ctx.save(); ctx.translate(d/2,d/2); ctx.rotate((rollDeg*Math.PI)/180);
+    ctx.globalCompositeOperation="multiply";
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle=noise; ctx.fillRect(-T/2,-T/2,T,T);
+    ctx.restore();
+
+    // cracks overlay (lighter)
+    ctx.save(); ctx.translate(d/2,d/2); ctx.rotate((rollDeg*Math.PI)/180);
+    ctx.globalCompositeOperation="multiply"; ctx.globalAlpha=0.55;
+    ctx.fillStyle=cracks; ctx.fillRect(-T/2,-T/2,T,T);
+    ctx.restore();
+
+    // vignette (subtle)
+    ctx.globalCompositeOperation="multiply";
+    ctx.globalAlpha = 0.18;
+    ctx.drawImage(getVignette(d),0,0);
+    ctx.globalAlpha = 1;
+
     ctx.restore();
   }
 
   function spawnDungBeetle({speed=180,maxBall=160}={}){
     const container=ensureContainer();
     const layer=document.createElement("div");
-    layer.className=BEETLE_LAYER_CLASS; Object.assign(layer.style,{position:"absolute",inset:0,pointerEvents:"none"});
+    layer.className=BEETLE_LAYER_CLASS;
+    Object.assign(layer.style,{
+      position:"absolute",
+      inset:0,
+      pointerEvents:"none",
+      zIndex: String(Z.BEETLE) // ensure entire beetle layer is above termite paint
+    });
 
     const initialBall=48;
     const ballCanvas=document.createElement("canvas");
@@ -638,7 +671,7 @@
     ceph.setAttribute("fill", SPIDER_CFG.color);
     bodyG.appendChild(abdomen); bodyG.appendChild(ceph);
 
-    // legs: proper hierarchy with separate groups for yaw, coxa, femur, tibia
+    // legs
     const legs = [];
     const anchors = [];
     const shoulderRadius = size * 0.38;
@@ -847,6 +880,9 @@
     c.querySelectorAll("svg").forEach(el=>{ if (el.parentElement===c || el.closest(`#${CONTAINER_ID}`)) el.remove(); });
 
     if(!c.firstChild) c.remove();
+
+    // mark resize handler re-bindable next run (kept simple; no actual unbind)
+    if (ensureEatCanvas._boundResize) ensureEatCanvas._boundResize = false;
   }
 
   // =================== Bridge
