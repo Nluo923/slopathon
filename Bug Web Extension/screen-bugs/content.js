@@ -142,6 +142,7 @@
       el, s, p,
       get x(){return x + s/2;},
       get y(){return y + s/2;},
+      get r(){return s*0.42;},           // ~radius for collision
       _cell:null, _vx:vx, _vy:vy,
 
       updateBoid(dt){
@@ -380,6 +381,9 @@
 
     return {
       el,
+      get x(){ return x; },
+      get y(){ return y; },
+      get r(){ return size * 0.45; }, // approx radius for collision
       update(dt){
         heading += rand(-TERMITE_CFG.turnJitter, TERMITE_CFG.turnJitter) * dt;
 
@@ -626,17 +630,63 @@
     startEngine();
   }
 
-  // =================== SPIDERS (8 legs, each with 3 animated bones via SVG hierarchy) ===================
+  // =================== GAZE INPUT (singleton, used by spiders)
+  const GAZE = (() => {
+    const WS_URL = "ws://localhost:8001/";
+    let ws = null, open = false;
+    let u = 0.5, v = 0.5, valid = false, blink = false;
+    let tx = window.innerWidth / 2, ty = window.innerHeight / 2;
+    const SMOOTH = 0.22;
+    function clamp01(n){ return n < 0 ? 0 : (n > 1 ? 1 : n); }
+    function lerp(a,b,t){ return a + (b - a) * t; }
+    function uvToViewport(uu, vv){ return { x: uu * window.innerWidth, y: vv * window.innerHeight }; }
+
+    function connect(){
+      try { ws = new WebSocket(WS_URL); } catch { ws = null; open = false; return; }
+      ws.addEventListener("open", () => { open = true; });
+      ws.addEventListener("close", () => { open = false; setTimeout(connect, 1000); });
+      ws.addEventListener("error", () => { open = false; try{ ws.close(); }catch{} });
+      ws.addEventListener("message", (e) => {
+        try{
+          const d = JSON.parse(e.data);
+          if (typeof d.x === "number" && typeof d.y === "number") {
+            u = clamp01(d.x); v = clamp01(d.y);
+            blink = !!d.blink; valid = !blink;
+          }
+        }catch{}
+      });
+    }
+    connect();
+
+    function tick(dt){
+      const p = uvToViewport(u, v);
+      const t = 1 - Math.pow(1 - SMOOTH, Math.max(1, dt*60));
+      tx = lerp(tx, p.x, t);
+      ty = lerp(ty, p.y, t);
+    }
+
+    window.addEventListener("resize", () => { const p = uvToViewport(u, v); tx = p.x; ty = p.y; });
+
+    return {
+      step(dt){ tick(dt); },
+      get(){ return { x: tx, y: ty, valid: open && valid, blink }; },
+      mouseFallback(ev){ if (!open) { u = clamp01(ev.clientX / window.innerWidth); v = clamp01(ev.clientY / window.innerHeight); valid = true; blink = false; } }
+    };
+  })();
+  window.addEventListener("mousemove", (ev) => GAZE.mouseFallback(ev));
+
+  // =================== SPIDERS (8 legs, 3 bones/leg via SVG hierarchy) ===================
   const __SPIDERS__ = { list: [] };
   const SPIDER_CFG = {
     bodySize: 42,
     legLen: { coxa: 16, femur: 22, tibia: 22 },
     legWidth: 4,
     color: "#1b1b1b",
-    maxSpeed: 120,
+    maxSpeed: 300,
     accel: 420,
     turnJitter: 1.8,
-    zIndex: Z.SPIDER
+    zIndex: Z.SPIDER,
+    eatRadiusScale: 0.55 // fraction of bodySize used for collision
   };
 
   function createSpider({ x, y, size = SPIDER_CFG.bodySize } = {}) {
@@ -673,7 +723,6 @@
 
     // legs
     const legs = [];
-    const anchors = [];
     const shoulderRadius = size * 0.38;
 
     for (let i = 0; i < 8; i++) {
@@ -681,7 +730,6 @@
       const ax = Math.cos(angle) * shoulderRadius;
       const ay = Math.sin(angle) * shoulderRadius;
       const angleDeg = (angle * 180) / Math.PI;
-      anchors.push({ ax, ay, baseAngle: angle });
 
       const legRoot = document.createElementNS("http://www.w3.org/2000/svg", "g");
       legRoot.setAttribute("transform", `translate(${ax} ${ay})`);
@@ -732,7 +780,7 @@
       bodyG.appendChild(legRoot);
 
       legs.push({
-        legRoot, yawG, coxaG, femurG, tibiaG,
+        yawG, coxaG, femurG, tibiaG,
         phase: (i % 2 === 0 ? 0 : Math.PI),
         noise: Math.random() * Math.PI * 2,
         baseYawDeg: angleDeg
@@ -748,6 +796,7 @@
     let vx = Math.cos(heading) * (SPIDER_CFG.maxSpeed * 0.3);
     let vy = Math.sin(heading) * (SPIDER_CFG.maxSpeed * 0.3);
     let gaitTime = 0;
+    const eatR = size * SPIDER_CFG.eatRadiusScale;
 
     function setLegAngles(leg, baseYawDeg, coxaDeg, femurDeg, tibiaDeg) {
       leg.yawG.setAttribute("transform", `rotate(${baseYawDeg})`);
@@ -769,7 +818,7 @@
         const swing = Math.sin(leg.phase + leg.noise * 0.2);
         const lift  = Math.max(0, Math.sin(leg.phase + Math.PI / 2)) ** 1.2;
 
-        const baseYawDeg = leg.baseYawDeg; // keep outward splay stable
+        const baseYawDeg = leg.baseYawDeg;
         const coxaDeg  = swing * 18;
         const femurDeg = -10 + swing * 14 - lift * 12;
         const tibiaDeg =  8  - swing * 10 - lift * 16;
@@ -778,19 +827,47 @@
       }
     }
 
-    function updatePose() {
-      svg.style.left = `${px}px`;
-      svg.style.top  = `${py}px`;
-      svg.style.transform = `translate(-50%, -50%) rotate(${(Math.atan2(vy, vx) * 180) / Math.PI}deg)`;
+    // simple "chomp" flash when eating
+    function chompFlash(){
+      const flash = document.createElement("div");
+      Object.assign(flash.style,{
+        position:"absolute", left:`${px}px`, top:`${py}px`,
+        transform:"translate(-50%,-50%)",
+        width:"18px", height:"18px", borderRadius:"50%",
+        background:"rgba(255,255,255,0.7)", pointerEvents:"none",
+        filter:"blur(1px)", zIndex:String(SPIDER_CFG.zIndex+1)
+      });
+      ensureContainer().appendChild(flash);
+      requestAnimationFrame(()=>{ flash.style.transition="opacity 120ms ease, transform 120ms ease"; flash.style.opacity="0"; flash.style.transform="translate(-50%,-50%) scale(1.6)"; });
+      setTimeout(()=>{ try{flash.remove();}catch{} }, 150);
     }
 
+    // ==== SPIDER UPDATE: seek/arrive toward gaze + eat collisions ====
     return {
       el: svg,
       update(dt) {
-        // wander & steer
-        heading += (Math.random() * 2 - 1) * SPIDER_CFG.turnJitter * dt;
-        const desiredX = Math.cos(heading) * SPIDER_CFG.maxSpeed;
-        const desiredY = Math.sin(heading) * SPIDER_CFG.maxSpeed;
+        // advance smoothed gaze target
+        GAZE.step(dt);
+
+        const g = GAZE.get();
+        const hasTarget = g.valid;
+
+        // desired velocity
+        let desiredX, desiredY;
+        if (hasTarget) {
+          const dx = g.x - px;
+          const dy = g.y - py;
+          const dist = Math.hypot(dx, dy) || 1;
+          const arriveSpeed = Math.min(SPIDER_CFG.maxSpeed, dist * 3.0);
+          desiredX = (dx / dist) * arriveSpeed;
+          desiredY = (dy / dist) * arriveSpeed;
+        } else {
+          heading += (Math.random() * 2 - 1) * SPIDER_CFG.turnJitter * dt;
+          desiredX = Math.cos(heading) * SPIDER_CFG.maxSpeed;
+          desiredY = Math.sin(heading) * SPIDER_CFG.maxSpeed;
+        }
+
+        // steer with accel cap
         let ax = desiredX - vx, ay = desiredY - vy;
         const aLen = Math.hypot(ax, ay) || 1;
         const aMax = SPIDER_CFG.accel;
@@ -807,8 +884,35 @@
         if (px > window.innerWidth - pad) { px = window.innerWidth - pad; vx = -Math.abs(vx); heading = Math.atan2(vy, vx); }
         if (py > window.innerHeight - pad) { py = window.innerHeight - pad; vy = -Math.abs(vy); heading = Math.atan2(vy, vx); }
 
+        // ---- EAT COLLISIONS (scatter bugs + termites; skip dung beetles) ----
+        // scatters
+        for (let i = state.scatters.length - 1; i >= 0; i--) {
+          const s = state.scatters[i];
+          if (!s?.el?.isConnected) continue;
+          const dx = s.x - px, dy = s.y - py;
+          const hit = (dx*dx + dy*dy) <= Math.pow(eatR + (s.r ?? s.s*0.42), 2);
+          if (hit) {
+            chompFlash();
+            s.dispose && s.dispose();  // engine will prune disconnected nodes
+          }
+        }
+        // termites
+        for (let i = state.termites.length - 1; i >= 0; i--) {
+          const t = state.termites[i];
+          if (!t?.el?.isConnected) continue;
+          const dx = t.x - px, dy = t.y - py;
+          const hit = (dx*dx + dy*dy) <= Math.pow(eatR + (t.r ?? 6), 2);
+          if (hit) {
+            chompFlash();
+            t.dispose && t.dispose();
+          }
+        }
+
+        // animate legs & pose
         updateLegs(dt);
-        updatePose();
+        svg.style.left = `${px}px`;
+        svg.style.top  = `${py}px`;
+        svg.style.transform = `translate(-50%, -50%) rotate(${(Math.atan2(vy, vx) * 180) / Math.PI}deg)`;
       },
       dispose() { try { svg.remove(); } catch {} }
     };
@@ -837,8 +941,8 @@
         // scatter boids
         for(let i=state.scatters.length-1;i>=0;i--){ const s=state.scatters[i]; if(!s.el.isConnected){ state.scatters.splice(i,1); continue;} s.updateBoid(state.dtFixed); }
 
-        // termites
-        for(let i=termites.list.length-1;i>=0;i--){ const t=termites.list[i]; if(!t.el.isConnected){ termites.list.splice(i,1); continue;} t.update(state.dtFixed); }
+        // termites (mirror state array for spider use)
+        for(let i=termitiesMirrorSync(), j=termites.list.length-1;j>=0;j--){ const t=termites.list[j]; if(!t.el.isConnected){ termites.list.splice(j,1); continue;} t.update(state.dtFixed); }
 
         // spiders
         for (let i = __SPIDERS__.list.length - 1; i >= 0; i--) {
@@ -854,6 +958,10 @@
     };
     state.engineRaf=requestAnimationFrame(loop);
   }
+
+  // keep a quick pointer for collisions (so spider sees current termites array as `state.termites`)
+  function termitiesMirrorSync(){ state.termites = termites.list; }
+
   function stopEngine(){ state.running=false; if(state.engineRaf) cancelAnimationFrame(state.engineRaf); state.engineRaf=null; }
 
   // =================== Clear
@@ -863,6 +971,7 @@
     for(const b of state.beetles) b.dispose(); state.beetles=[];
     for(const s of state.scatters) s.dispose && s.dispose(); state.scatters=[];
     for(const t of termites.list) t.dispose && t.dispose(); termites.list=[];
+    state.termites = termites.list;
 
     // remove eat canvas (clears all black pixels)
     if (termites.eatCanvas && termites.eatCanvas.isConnected) { try { termites.eatCanvas.remove(); } catch {} }
@@ -881,7 +990,6 @@
 
     if(!c.firstChild) c.remove();
 
-    // mark resize handler re-bindable next run (kept simple; no actual unbind)
     if (ensureEatCanvas._boundResize) ensureEatCanvas._boundResize = false;
   }
 
