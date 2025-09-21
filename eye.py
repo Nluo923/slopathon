@@ -40,8 +40,7 @@ def read_gaze():
 	x, y = 0, 0
 	if features is not None and not blink:
 		x, y = estimator.predict([features])[0]
-		print(f"Gaze: ({x:.0f}, {y:.0f})")
-
+		# print(f"Gaze: ({x:.0f}, {y:.0f})")
 	return {
     	"x": x / screen.width,
     	"y": y / screen.height,
@@ -51,13 +50,17 @@ def read_gaze():
 connections = set()
 
 async def handler(ws):
-	try:
-		while True:
+	connections.add(ws)
+	
+	while True:
+		try:
 			payload = json.dumps(read_gaze())
-			await ws.send(payload)
-			await asyncio.sleep(1/120)
-	except ConnectionClosed:
-		print("connection closed", ws)
+			# await ws.send(payload)
+			broadcast(connections, payload)
+			await asyncio.sleep(1/60)
+		except ConnectionClosed:
+			connections.remove(ws)
+			print("connection closed", ws)
 
 async def main():
 	async with serve(handler, "localhost", 8001) as server:
